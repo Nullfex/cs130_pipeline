@@ -22,14 +22,16 @@ void initialize_render(driver_state& state, int width, int height)
     state.image_color=0;
     state.image_depth=0;
     //std::cout<<"TODO: allocate and initialize state.image_color and state.image_depth."<<std::endl;
-
-	//still needs depth later	
 	
- 	state.image_color = new pixel[width * height];
 
+ 	state.image_color = new pixel[width*height];
+	state.image_depth = new float[width*height];	//adds depth
+	
 	for(int i = 0; i < width * height; i++)
 	{
        	state.image_color[i] = make_pixel(0, 0, 0);
+
+	state.image_depth[i] = std::numeric_limits<float>::max();	
     	}
 }
 
@@ -115,6 +117,7 @@ void rasterize_triangle(driver_state& state, const data_geometry& v0,
 
 	float x[3];
     	float y[3];
+	float z[3];	
 
  	x[0] = 0.5 * ((state.image_width*v0.gl_Position[0]/v0.gl_Position[3])+state.image_width-1.0);
    	x[1] = 0.5 * ((state.image_width*v1.gl_Position[0]/v1.gl_Position[3])+state.image_width-1.0);
@@ -123,6 +126,11 @@ void rasterize_triangle(driver_state& state, const data_geometry& v0,
     	y[0] = 0.5 * ((state.image_height*v0.gl_Position[1]/v0.gl_Position[3])+state.image_height-1.0);
     	y[1] = 0.5 * ((state.image_height*v1.gl_Position[1]/v1.gl_Position[3])+state.image_height-1.0);
     	y[2] = 0.5 * ((state.image_height*v2.gl_Position[1]/v2.gl_Position[3])+state.image_height-1.0);
+
+	z[0] = 0.5 * ((state.image_width*v0.gl_Position[2]/v0.gl_Position[3])+state.image_width-1.0);
+   	z[1] = 0.5 * ((state.image_width*v1.gl_Position[2]/v1.gl_Position[3])+state.image_width-1.0);
+   	z[2] = 0.5 * ((state.image_width*v2.gl_Position[2]/v2.gl_Position[3])+state.image_width-1.0);	
+
 
  	float lowest_x = std::min(std::min(x[0],x[1]),x[2]);
 	if(lowest_x < 0)
@@ -152,6 +160,7 @@ void rasterize_triangle(driver_state& state, const data_geometry& v0,
     	data_output fragment_out;
 
 	float alpha, beta, gamma;
+	float alphacon, betacon, gammacon;
 
     	for (int cur_x = lowest_x; cur_x <= highest_x; cur_x++) //fills triangle
 	{
@@ -162,10 +171,50 @@ void rasterize_triangle(driver_state& state, const data_geometry& v0,
           		gamma = compute_triangle_area(x[0], x[1], cur_x, y[0],  y[1], cur_y) / tri_area;
 
 			if (alpha >= 0 && beta >= 0 && gamma >= 0){	//fills only half of the square
-  				state.image_color[cur_x + (cur_y * state.image_width)] = make_pixel(255,255,255); //sets pixel to white
-			}	
-		}
-	}
- 	state.fragment_shader(fragment_data, fragment_out, state.uniform_data);
+				
+				float z_val = alpha*z[0]+beta*z[1]+gamma*z[2];
 
+				alphacon = alpha;
+                        	betacon = beta;
+                        	gammacon = gamma;
+
+				if(z_val<state.image_depth[cur_x+(cur_y*state.image_width)])
+				{
+  					state.image_depth[cur_x + (cur_y*state.image_width)] = z_val;			
+	
+					for (int k=0; k<state.floats_per_vertex; k++)
+					{
+						float c;
+						
+						switch (state.interp_rules[k])
+						{
+							case interp_type::flat:
+								fragment_data.data[k] = v0.data[k];
+							break;
+
+							case interp_type::smooth:
+                          					c = (alphacon/v0.gl_Position[3]) + (betacon/v1.gl_Position[3]) + (gammacon/v2.gl_Position[3]);
+
+                          					alpha = alphacon/(v0.gl_Position[3]*c);
+                          					beta = betacon/(v1.gl_Position[3]*c);
+                          					gamma = gammacon/(v2.gl_Position[3]*c);
+
+                          					fragment_data.data[k] =alpha*v0.data[k]+beta*v1.data[k]+gamma*v2.data[k];
+                          				break;
+
+                       					case interp_type::noperspective:
+                          					fragment_data.data[k] = alphacon*v0.data[k]+betacon*v1.data[k]+gammacon*v2.data[k];
+                          				break;
+
+                       					default:
+                          				break;
+						}									
+					}
+					state.image_color[cur_x + (cur_y * state.image_width)] = make_pixel(fragment_out.output_color[0]*255,fragment_out.output_color[1]*255,fragment_out.output_color[2]*255); //sets color
+					//state.image_color[cur_x + (cur_y * state.image_width)] = make_pixel(255,255,255); //sets pixel to white
+					state.fragment_shader(fragment_data, fragment_out, state.uniform_data);
+				}
+			}
+				
+		}}
 }
